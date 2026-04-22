@@ -1,0 +1,15 @@
+/data/
+/config.json
+/web2api.exe
+/web2api
+*.db
+*.sqlite
+*.log
+/.gocache/
+/.gomodcache/
+/web/node_modules/
+/web/.next/
+/.upstream-chatgpt2api/
+/internal/frontend/dist
+/.idea
+/.build
