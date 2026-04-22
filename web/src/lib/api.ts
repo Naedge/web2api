@@ -54,6 +54,11 @@ export type AuthStatusResponse = {
   username?: string;
 };
 
+export type APIKeyInfo = {
+  api_key: string;
+  username: string;
+};
+
 export async function fetchAuthStatus() {
   return httpRequest<AuthStatusResponse>("/auth/status", {
     redirectOnUnauthorized: false,
@@ -78,6 +83,16 @@ export async function login(username: string, password: string) {
 
 export async function logout() {
   return httpRequest<{ message: string }>("/api/auth/logout", {
+    method: "POST",
+  });
+}
+
+export async function fetchAPIKey() {
+  return httpRequest<APIKeyInfo>("/api/auth/api-key");
+}
+
+export async function regenerateAPIKey() {
+  return httpRequest<APIKeyInfo>("/api/auth/api-key/regenerate", {
     method: "POST",
   });
 }

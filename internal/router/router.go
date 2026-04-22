@@ -44,6 +44,8 @@ func New(dep Dependencies) *gin.Engine {
 	apiRoutes := r.Group("/api")
 	apiRoutes.Use(dep.Auth.RequireSession())
 	apiRoutes.POST("/auth/logout", dep.AuthUI.Logout)
+	apiRoutes.GET("/auth/api-key", dep.AuthUI.GetAPIKey)
+	apiRoutes.POST("/auth/api-key/regenerate", dep.AuthUI.RegenerateAPIKey)
 	apiRoutes.GET("/settings/proxy", dep.Proxy.Get)
 	apiRoutes.POST("/settings/proxy", dep.Proxy.Save)
 	apiRoutes.GET("/accounts", dep.Account.List)

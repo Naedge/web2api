@@ -35,13 +35,16 @@ func Run() error {
 	proxyRepo := repository.NewProxySettingRepository(db)
 
 	authService := service.NewAuthService(adminRepo, cfg.SessionSecret)
+	if err := authService.EnsureAPIKey(context.Background()); err != nil {
+		return err
+	}
 	proxyService := service.NewProxyService(proxyRepo)
 	accountService := service.NewAccountService(accountRepo, proxyService, cfg.TLSVerify)
 	imageUpstream := service.NewImageUpstreamService(accountService, proxyService, cfg.TLSVerify)
 	chatService := service.NewChatService(accountService, imageUpstream)
 	cpaService := service.NewCPAService(cpaRepo, accountService, cfg.TLSVerify)
 
-	authMiddleware := middleware.NewAuthMiddleware(cfg.APIKey, authService)
+	authMiddleware := middleware.NewAuthMiddleware(authService)
 	webHandler := handler.NewWebHandler()
 	authHandler := handler.NewAuthHandler(authService)
 	systemHandler := handler.NewSystemHandler(chatService)

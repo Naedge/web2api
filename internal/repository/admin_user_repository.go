@@ -47,6 +47,34 @@ func (r *AdminUserRepository) GetByUsername(ctx context.Context, username string
 	return &item, nil
 }
 
+func (r *AdminUserRepository) GetByAPIKey(ctx context.Context, apiKey string) (*model.AdminUser, error) {
+	var item model.AdminUser
+	err := r.db.WithContext(ctx).Where("api_key = ?", apiKey).Take(&item).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (r *AdminUserRepository) GetFirst(ctx context.Context) (*model.AdminUser, error) {
+	var item model.AdminUser
+	err := r.db.WithContext(ctx).Order("id asc").Take(&item).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
 func (r *AdminUserRepository) Create(ctx context.Context, item *model.AdminUser) error {
 	return r.db.WithContext(ctx).Create(item).Error
+}
+
+func (r *AdminUserRepository) Save(ctx context.Context, item *model.AdminUser) error {
+	return r.db.WithContext(ctx).Save(item).Error
 }

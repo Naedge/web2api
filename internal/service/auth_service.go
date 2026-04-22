@@ -38,6 +38,11 @@ type IssuedSession struct {
 	Username  string
 }
 
+type APIKeyInfo struct {
+	APIKey   string `json:"api_key"`
+	Username string `json:"username"`
+}
+
 func NewAuthService(
 	repo *repository.AdminUserRepository,
 	sessionSecret string,
@@ -82,12 +87,75 @@ func (s *AuthService) Setup(
 	user := &model.AdminUser{
 		Username:     username,
 		PasswordHash: string(passwordHash),
+		APIKey:       generateAPIKey(),
 	}
 	if err := s.repo.Create(ctx, user); err != nil {
 		return nil, err
 	}
 
 	return s.issueSession(user)
+}
+
+func (s *AuthService) EnsureAPIKey(ctx context.Context) error {
+	user, err := s.repo.GetFirst(ctx)
+	if err != nil {
+		return err
+	}
+	if user == nil || strings.TrimSpace(user.APIKey) != "" {
+		return nil
+	}
+	user.APIKey = generateAPIKey()
+	return s.repo.Save(ctx, user)
+}
+
+func (s *AuthService) ValidateAPIKey(ctx context.Context, apiKey string) (bool, error) {
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return false, nil
+	}
+	user, err := s.repo.GetByAPIKey(ctx, apiKey)
+	if err != nil {
+		return false, err
+	}
+	return user != nil, nil
+}
+
+func (s *AuthService) GetAPIKey(ctx context.Context) (*APIKeyInfo, error) {
+	user, err := s.repo.GetFirst(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, notFound("admin user not found")
+	}
+	if strings.TrimSpace(user.APIKey) == "" {
+		user.APIKey = generateAPIKey()
+		if err := s.repo.Save(ctx, user); err != nil {
+			return nil, err
+		}
+	}
+	return &APIKeyInfo{
+		APIKey:   user.APIKey,
+		Username: user.Username,
+	}, nil
+}
+
+func (s *AuthService) RegenerateAPIKey(ctx context.Context) (*APIKeyInfo, error) {
+	user, err := s.repo.GetFirst(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, notFound("admin user not found")
+	}
+	user.APIKey = generateAPIKey()
+	if err := s.repo.Save(ctx, user); err != nil {
+		return nil, err
+	}
+	return &APIKeyInfo{
+		APIKey:   user.APIKey,
+		Username: user.Username,
+	}, nil
 }
 
 func (s *AuthService) Login(
@@ -221,4 +289,8 @@ func randomHex(length int) string {
 		return newHexID(length)
 	}
 	return hex.EncodeToString(buf)[:length]
+}
+
+func generateAPIKey() string {
+	return "sk-" + randomHex(48)
 }

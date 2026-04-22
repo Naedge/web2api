@@ -10,16 +10,13 @@ import (
 )
 
 type AuthMiddleware struct {
-	apiKey      string
 	authService *service.AuthService
 }
 
 func NewAuthMiddleware(
-	apiKey string,
 	authService *service.AuthService,
 ) *AuthMiddleware {
 	return &AuthMiddleware{
-		apiKey:      strings.TrimSpace(apiKey),
 		authService: authService,
 	}
 }
@@ -27,7 +24,14 @@ func NewAuthMiddleware(
 func (m *AuthMiddleware) RequireAPIKey() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := extractBearerToken(c.GetHeader("Authorization"))
-		if token == "" || token != m.apiKey {
+		valid, err := m.authService.ValidateAPIKey(c.Request.Context(), token)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+				"detail": gin.H{"error": err.Error()},
+			})
+			return
+		}
+		if !valid {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"detail": gin.H{"error": "authorization is invalid"},
 			})
@@ -40,9 +44,18 @@ func (m *AuthMiddleware) RequireAPIKey() gin.HandlerFunc {
 func (m *AuthMiddleware) RequireAPIOrSession() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := extractBearerToken(c.GetHeader("Authorization"))
-		if token != "" && token == m.apiKey {
-			c.Next()
-			return
+		if token != "" {
+			valid, err := m.authService.ValidateAPIKey(c.Request.Context(), token)
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+					"detail": gin.H{"error": err.Error()},
+				})
+				return
+			}
+			if valid {
+				c.Next()
+				return
+			}
 		}
 
 		cookieValue, err := c.Cookie(service.SessionCookieName)

@@ -1,7 +1,6 @@
 {
   "host": "0.0.0.0",
   "port": 8080,
-  "api-key": "chatgpt2api",
   "session-secret": "web2api-session-secret",
   "database-dsn": "data/web2api.db",
   "refresh-account-interval-minute": 30,

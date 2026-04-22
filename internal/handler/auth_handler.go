@@ -97,6 +97,24 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})
 }
 
+func (h *AuthHandler) GetAPIKey(c *gin.Context) {
+	info, err := h.authService.GetAPIKey(c.Request.Context())
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, info)
+}
+
+func (h *AuthHandler) RegenerateAPIKey(c *gin.Context) {
+	info, err := h.authService.RegenerateAPIKey(c.Request.Context())
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, info)
+}
+
 func setSessionCookie(c *gin.Context, session *service.IssuedSession) {
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     service.SessionCookieName,
