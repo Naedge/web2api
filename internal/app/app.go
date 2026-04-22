@@ -32,10 +32,12 @@ func Run() error {
 	adminRepo := repository.NewAdminUserRepository(db)
 	accountRepo := repository.NewAccountRepository(db)
 	cpaRepo := repository.NewCPAPoolRepository(db)
+	proxyRepo := repository.NewProxySettingRepository(db)
 
 	authService := service.NewAuthService(adminRepo, cfg.SessionSecret)
-	accountService := service.NewAccountService(accountRepo, cfg.TLSVerify)
-	imageUpstream := service.NewImageUpstreamService(accountService, cfg.TLSVerify)
+	proxyService := service.NewProxyService(proxyRepo)
+	accountService := service.NewAccountService(accountRepo, proxyService, cfg.TLSVerify)
+	imageUpstream := service.NewImageUpstreamService(accountService, proxyService, cfg.TLSVerify)
 	chatService := service.NewChatService(accountService, imageUpstream)
 	cpaService := service.NewCPAService(cpaRepo, accountService, cfg.TLSVerify)
 
@@ -43,6 +45,7 @@ func Run() error {
 	webHandler := handler.NewWebHandler()
 	authHandler := handler.NewAuthHandler(authService)
 	systemHandler := handler.NewSystemHandler(chatService)
+	proxyHandler := handler.NewProxyHandler(proxyService)
 	accountHandler := handler.NewAccountHandler(accountService)
 	cpaHandler := handler.NewCPAHandler(cpaService)
 	imageHandler := handler.NewImageHandler(chatService)
@@ -52,6 +55,7 @@ func Run() error {
 		Web:     webHandler,
 		AuthUI:  authHandler,
 		System:  systemHandler,
+		Proxy:   proxyHandler,
 		Account: accountHandler,
 		CPA:     cpaHandler,
 		Image:   imageHandler,

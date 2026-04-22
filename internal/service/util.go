@@ -90,6 +90,80 @@ func formatTimePointer(value *time.Time) string {
 	return value.Format("2006-01-02 15:04:05")
 }
 
+func FirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func AsString(value any) string {
+	switch current := value.(type) {
+	case string:
+		return current
+	case json.Number:
+		return current.String()
+	case float64:
+		return fmt.Sprintf("%.0f", current)
+	default:
+		return ""
+	}
+}
+
+func ParseImageCount(rawValue any, defaultValue int) (int, error) {
+	if rawValue == nil {
+		return defaultValue, nil
+	}
+
+	switch current := rawValue.(type) {
+	case json.Number:
+		number, err := current.Int64()
+		if err != nil {
+			return 0, badRequest("n must be an integer")
+		}
+		if number < 1 || number > 4 {
+			return 0, badRequest("n must be between 1 and 4")
+		}
+		return int(number), nil
+	case float64:
+		if current != float64(int(current)) {
+			return 0, badRequest("n must be an integer")
+		}
+		if current < 1 || current > 4 {
+			return 0, badRequest("n must be between 1 and 4")
+		}
+		return int(current), nil
+	case int:
+		if current < 1 || current > 4 {
+			return 0, badRequest("n must be between 1 and 4")
+		}
+		return current, nil
+	case int64:
+		if current < 1 || current > 4 {
+			return 0, badRequest("n must be between 1 and 4")
+		}
+		return int(current), nil
+	case string:
+		current = strings.TrimSpace(current)
+		if current == "" {
+			return defaultValue, nil
+		}
+		number, err := json.Number(current).Int64()
+		if err != nil {
+			return 0, badRequest("n must be an integer")
+		}
+		if number < 1 || number > 4 {
+			return 0, badRequest("n must be between 1 and 4")
+		}
+		return int(number), nil
+	default:
+		return 0, badRequest("n must be an integer")
+	}
+}
+
 func withTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	if _, has := ctx.Deadline(); has {
 		return context.WithCancel(ctx)

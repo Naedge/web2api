@@ -13,6 +13,10 @@ func badRequest(message string) error {
 	return &StatusError{Code: 400, Message: message}
 }
 
+func BadRequest(message string) error {
+	return badRequest(message)
+}
+
 func unauthorized(message string) error {
 	return &StatusError{Code: 401, Message: message}
 }

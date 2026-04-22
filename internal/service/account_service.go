@@ -4,30 +4,47 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	fhttp "github.com/bogdanfinn/fhttp"
 
 	"web2api/internal/dto"
 	"web2api/internal/model"
 	"web2api/internal/repository"
 )
 
-const defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
+const defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+var accountTypeMap = map[string]string{
+	"free":       "Free",
+	"plus":       "Plus",
+	"team":       "Team",
+	"pro":        "Pro",
+	"personal":   "Plus",
+	"business":   "Team",
+	"enterprise": "Team",
+}
 
 type AccountService struct {
-	repo      *repository.AccountRepository
-	tlsVerify bool
+	repo         *repository.AccountRepository
+	proxyService *ProxyService
+	tlsVerify    bool
 
 	nextMu    sync.Mutex
 	nextIndex int
 }
 
-func NewAccountService(repo *repository.AccountRepository, tlsVerify bool) *AccountService {
+func NewAccountService(
+	repo *repository.AccountRepository,
+	proxyService *ProxyService,
+	tlsVerify bool,
+) *AccountService {
 	return &AccountService{
-		repo:      repo,
-		tlsVerify: tlsVerify,
+		repo:         repo,
+		proxyService: proxyService,
+		tlsVerify:    tlsVerify,
 	}
 }
 
@@ -221,18 +238,39 @@ func (s *AccountService) RefreshAccountState(ctx context.Context, accessToken st
 	timeoutCtx, cancel := withTimeout(ctx, 25*time.Second)
 	defer cancel()
 
-	client := newHTTPClient(s.tlsVerify, 25*time.Second)
-	headers := s.accountHeaders(item)
+	proxyConfig, err := s.proxyService.ActiveConfig(ctx)
+	if err != nil {
+		return err
+	}
 
-	meReq, err := newJSONRequest(timeoutCtx, http.MethodGet, "https://chatgpt.com/backend-api/me", headers, nil)
+	client, err := newBrowserHTTPClient(
+		proxyConfig,
+		25*time.Second,
+		firstNonEmpty(strings.TrimSpace(item.Impersonate), "edge101"),
+	)
 	if err != nil {
 		return err
 	}
-	meResp, err := client.Do(meReq)
+	if strings.TrimSpace(item.OAIDeviceID) == "" {
+		item.OAIDeviceID = newUUID()
+	}
+	headers := s.buildRefreshHeaders(item)
+
+	meReq, err := newBrowserRequest(
+		timeoutCtx,
+		fhttp.MethodGet,
+		"https://chatgpt.com/backend-api/me",
+		headers,
+		nil,
+	)
 	if err != nil {
 		return err
 	}
-	if meResp.StatusCode == http.StatusUnauthorized {
+	meResp, err := doBrowserRequest(client, meReq)
+	if err != nil {
+		return err
+	}
+	if meResp.StatusCode == fhttp.StatusUnauthorized {
 		item.Status = model.AccountStatusInvalid
 		item.Quota = 0
 		if err := s.repo.Save(ctx, item); err != nil {
@@ -240,54 +278,53 @@ func (s *AccountService) RefreshAccountState(ctx context.Context, accessToken st
 		}
 		return unauthorized("检测到封号")
 	}
-	if meResp.StatusCode >= http.StatusBadRequest {
-		_ = readResponseSnippet(meResp, 512)
-		return fmt.Errorf("me request failed: %s", meResp.Status)
+	if meResp.StatusCode >= fhttp.StatusBadRequest {
+		snippet := readBrowserResponseSnippet(meResp, 512)
+		return fmt.Errorf("me request failed: %s %s", meResp.Status, strings.TrimSpace(snippet))
 	}
 
 	mePayload := map[string]any{}
-	if err := decodeJSONResponse(meResp, &mePayload); err != nil {
+	if err := decodeBrowserJSONResponse(meResp, &mePayload); err != nil {
 		return err
 	}
 
-	initReq, err := newJSONRequest(
+	initReq, err := newBrowserRequest(
 		timeoutCtx,
-		http.MethodPost,
+		fhttp.MethodPost,
 		"https://chatgpt.com/backend-api/conversation/init",
 		headers,
-		map[string]any{},
+		map[string]any{
+			"gizmo_id":                nil,
+			"requested_default_model": nil,
+			"conversation_id":         nil,
+			"timezone_offset_min":     -480,
+		},
 	)
 	if err != nil {
 		return err
 	}
-	initResp, err := client.Do(initReq)
+	initResp, err := doBrowserRequest(client, initReq)
 	if err != nil {
 		return err
 	}
-	if initResp.StatusCode >= http.StatusBadRequest {
-		_ = readResponseSnippet(initResp, 512)
-		return fmt.Errorf("init request failed: %s", initResp.Status)
+	if initResp.StatusCode >= fhttp.StatusBadRequest {
+		snippet := readBrowserResponseSnippet(initResp, 512)
+		return fmt.Errorf("init request failed: %s %s", initResp.Status, strings.TrimSpace(snippet))
 	}
 
 	initPayload := map[string]any{}
-	if err := decodeJSONResponse(initResp, &initPayload); err != nil {
+	if err := decodeBrowserJSONResponse(initResp, &initPayload); err != nil {
 		return err
 	}
 
 	item.Email = asString(mePayload["email"])
 	item.UserID = asString(mePayload["id"])
 
-	accountType := searchAccountType(mePayload)
-	if accountType == "" {
-		accountType = searchAccountType(initPayload)
-	}
-	if accountType == "" {
-		accountType = searchAccountType(decodeJWTBody(accessToken))
-	}
+	accountType := detectAccountType(accessToken, mePayload, initPayload)
 	if accountType == "" {
 		accountType = item.Type
 	}
-	item.Type = normalizeAccountType(accountType)
+	item.Type = firstNonEmpty(accountType, "Free")
 
 	if limits, ok := initPayload["limits_progress"].([]any); ok {
 		list := make([]map[string]any, 0, len(limits))
@@ -390,6 +427,15 @@ func (s *AccountService) MarkFailure(ctx context.Context, accessToken string, in
 	return s.repo.Save(ctx, item)
 }
 
+func (s *AccountService) RemoveToken(ctx context.Context, accessToken string) error {
+	accessToken = strings.TrimSpace(accessToken)
+	if accessToken == "" {
+		return nil
+	}
+	_, err := s.repo.DeleteByTokens(ctx, []string{accessToken})
+	return err
+}
+
 func (s *AccountService) accountHeaders(item *model.Account) map[string]string {
 	headers := map[string]string{
 		"Accept":             "application/json, text/plain, */*",
@@ -409,6 +455,34 @@ func (s *AccountService) accountHeaders(item *model.Account) map[string]string {
 	}
 	if item.Impersonate != "" {
 		headers["impersonate"] = item.Impersonate
+	}
+	return headers
+}
+
+func (s *AccountService) buildRefreshHeaders(item *model.Account) map[string]string {
+	headers := map[string]string{
+		"Authorization":         "Bearer " + item.AccessToken,
+		"Accept":                "*/*",
+		"Accept-Language":       "zh-CN,zh;q=0.9,en;q=0.8",
+		"Content-Type":          "application/json",
+		"Oai-Language":          "zh-CN",
+		"Origin":                "https://chatgpt.com",
+		"Referer":               "https://chatgpt.com/",
+		"Sec-Fetch-Dest":        "empty",
+		"Sec-Fetch-Mode":        "cors",
+		"Sec-Fetch-Site":        "same-origin",
+		"User-Agent":            firstNonEmpty(item.UserAgent, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
+		"Sec-CH-UA":             firstNonEmpty(item.SecCHUA, `"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"`),
+		"Sec-CH-UA-Mobile":      firstNonEmpty(item.SecCHUAMobile, "?0"),
+		"Sec-CH-UA-Platform":    firstNonEmpty(item.SecCHUAPlatform, `"Windows"`),
+		"X-OpenAI-Target-Path":  "/backend-api/me",
+		"X-OpenAI-Target-Route": "/backend-api/me",
+	}
+	if item.OAIDeviceID != "" {
+		headers["Oai-Device-Id"] = item.OAIDeviceID
+	}
+	if item.OAISessionID != "" {
+		headers["Oai-Session-Id"] = item.OAISessionID
 	}
 	return headers
 }
@@ -436,18 +510,28 @@ func (s *AccountService) toPublicItems(items []model.Account) []dto.AccountPubli
 }
 
 func normalizeAccountType(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "free":
-		return "Free"
-	case "plus", "chatgptplus":
-		return "Plus"
-	case "pro":
-		return "Pro"
-	case "team", "business":
-		return "Team"
-	default:
-		return firstNonEmpty(strings.TrimSpace(value), "Free")
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "chatgptplus" {
+		value = "plus"
 	}
+	return accountTypeMap[value]
+}
+
+func detectAccountType(accessToken string, mePayload any, initPayload any) string {
+	tokenPayload := decodeJWTBody(accessToken)
+	if authPayload, ok := tokenPayload["https://api.openai.com/auth"].(map[string]any); ok {
+		if matched := normalizeAccountType(asString(authPayload["chatgpt_plan_type"])); matched != "" {
+			return matched
+		}
+	}
+
+	for _, payload := range []any{mePayload, initPayload, tokenPayload} {
+		if matched := searchAccountType(payload); matched != "" {
+			return matched
+		}
+	}
+
+	return "Free"
 }
 
 func searchAccountType(value any) string {
@@ -455,14 +539,17 @@ func searchAccountType(value any) string {
 	case map[string]any:
 		for key, child := range current {
 			lowerKey := strings.ToLower(key)
-			if strings.Contains(lowerKey, "plan") || strings.Contains(lowerKey, "type") || strings.Contains(lowerKey, "subscription") {
-				if text := asString(child); text != "" {
-					normalized := normalizeAccountType(text)
-					if normalized != "Free" || strings.EqualFold(text, "free") {
-						return normalized
-					}
-				}
+			matched := normalizeAccountType(asString(child))
+			if matched != "" &&
+				(strings.Contains(lowerKey, "plan") ||
+					strings.Contains(lowerKey, "type") ||
+					strings.Contains(lowerKey, "subscription") ||
+					strings.Contains(lowerKey, "workspace") ||
+					strings.Contains(lowerKey, "tier")) {
+				return matched
 			}
+		}
+		for _, child := range current {
 			if nested := searchAccountType(child); nested != "" {
 				return nested
 			}
@@ -475,10 +562,10 @@ func searchAccountType(value any) string {
 		}
 	case string:
 		text := strings.TrimSpace(current)
-		switch strings.ToLower(text) {
-		case "free", "plus", "pro", "team", "business", "chatgptplus":
-			return normalizeAccountType(text)
+		if text == "" {
+			return ""
 		}
+		return normalizeAccountType(text)
 	}
 	return ""
 }
@@ -488,30 +575,18 @@ func extractQuotaAndRestoreAt(items []map[string]any) (int, string) {
 	restoreAt := ""
 
 	for _, item := range items {
-		switch {
-		case asInt(item["remaining"]) > 0:
-			quota = asInt(item["remaining"])
-		case asInt(item["limit"]) > 0:
-			quota = asInt(item["limit"])
-		case asInt(item["quota"]) > 0:
-			quota = asInt(item["quota"])
-		case asInt(item["max"]) > 0:
-			quota = asInt(item["max"]) - asInt(item["current"])
+		featureName := strings.TrimSpace(asString(item["feature_name"]))
+		if featureName != "image_gen" {
+			continue
 		}
+
+		quota = asInt(item["remaining"])
 		if quota < 0 {
 			quota = 0
 		}
 
-		restoreAt = firstNonEmpty(
-			restoreAt,
-			asString(item["restore_at"]),
-			asString(item["reset_at"]),
-			asString(item["reset_time"]),
-		)
-
-		if quota > 0 {
-			return quota, restoreAt
-		}
+		restoreAt = strings.TrimSpace(asString(item["reset_after"]))
+		break
 	}
 
 	return quota, restoreAt

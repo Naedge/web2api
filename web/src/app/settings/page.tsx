@@ -42,10 +42,13 @@ import {
   deleteCPAPool,
   fetchCPAPoolFiles,
   fetchCPAPools,
+  fetchProxySettings,
   startCPAImport,
   updateCPAPool,
+  updateProxySettings,
   type CPAPool,
   type CPARemoteFile,
+  type ProxyType,
 } from "@/lib/api";
 
 const PAGE_SIZE_OPTIONS = ["50", "100", "200"] as const;
@@ -73,6 +76,14 @@ export default function SettingsPage() {
 
   const [pools, setPools] = useState<CPAPool[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [proxyEnabled, setProxyEnabled] = useState(false);
+  const [proxyType, setProxyType] = useState<ProxyType>("http");
+  const [proxyHost, setProxyHost] = useState("");
+  const [proxyPort, setProxyPort] = useState("");
+  const [proxyUsername, setProxyUsername] = useState("");
+  const [proxyPassword, setProxyPassword] = useState("");
+  const [showProxyPassword, setShowProxyPassword] = useState(false);
+  const [isSavingProxy, setIsSavingProxy] = useState(false);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingPool, setEditingPool] = useState<CPAPool | null>(null);
@@ -99,6 +110,15 @@ export default function SettingsPage() {
     try {
       const poolData = await fetchCPAPools();
       setPools(poolData.pools);
+      try {
+        const proxyData = await fetchProxySettings();
+        setProxyEnabled(proxyData.enabled);
+        setProxyType(proxyData.type);
+        setProxyHost(proxyData.host || "");
+        setProxyPort(proxyData.port ? String(proxyData.port) : "");
+        setProxyUsername(proxyData.username || "");
+        setProxyPassword(proxyData.password || "");
+      } catch {}
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "加载 CPA 连接失败");
     } finally {
@@ -294,6 +314,31 @@ export default function SettingsPage() {
     }
   };
 
+  const handleSaveProxy = async () => {
+    setIsSavingProxy(true);
+    try {
+      const result = await updateProxySettings({
+        enabled: proxyEnabled,
+        type: proxyType,
+        host: proxyHost.trim(),
+        port: Number(proxyPort || 0),
+        username: proxyUsername.trim(),
+        password: proxyPassword.trim(),
+      });
+      setProxyEnabled(result.enabled);
+      setProxyType(result.type);
+      setProxyHost(result.host || "");
+      setProxyPort(result.port ? String(result.port) : "");
+      setProxyUsername(result.username || "");
+      setProxyPassword(result.password || "");
+      toast.success("代理设置已保存");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "保存代理设置失败");
+    } finally {
+      setIsSavingProxy(false);
+    }
+  };
+
   return (
     <>
       <section className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -304,6 +349,99 @@ export default function SettingsPage() {
       </section>
 
       <section className="space-y-6">
+        <Card className="rounded-2xl border-white/80 bg-white/90 shadow-sm">
+          <CardContent className="space-y-6 p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="flex size-10 items-center justify-center rounded-xl bg-stone-100">
+                  <Link2 className="size-5 text-stone-600" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold tracking-tight">ChatGPT 代理</h2>
+                  <p className="text-sm text-stone-500">开启后，和 ChatGPT 的全部通信都会走这个代理，CPA 请求不受影响。</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+                <Checkbox checked={proxyEnabled} onCheckedChange={(checked) => setProxyEnabled(Boolean(checked))} />
+                <span className="text-sm font-medium text-stone-700">启用代理</span>
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-stone-700">代理类型</label>
+                <Select value={proxyType} onValueChange={(value) => setProxyType(value as ProxyType)}>
+                  <SelectTrigger className="h-11 rounded-xl border-stone-200 bg-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="http">HTTP</SelectItem>
+                    <SelectItem value="https">HTTPS</SelectItem>
+                    <SelectItem value="socks5">SOCKS5</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-stone-700">主机</label>
+                <Input
+                  value={proxyHost}
+                  onChange={(event) => setProxyHost(event.target.value)}
+                  placeholder="127.0.0.1"
+                  className="h-11 rounded-xl border-stone-200 bg-white"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-stone-700">端口</label>
+                <Input
+                  value={proxyPort}
+                  onChange={(event) => setProxyPort(event.target.value.replace(/[^\d]/g, ""))}
+                  placeholder="7890"
+                  className="h-11 rounded-xl border-stone-200 bg-white"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-stone-700">用户名</label>
+                <Input
+                  value={proxyUsername}
+                  onChange={(event) => setProxyUsername(event.target.value)}
+                  placeholder="可选"
+                  className="h-11 rounded-xl border-stone-200 bg-white"
+                />
+              </div>
+              <div className="space-y-2 lg:col-span-2">
+                <label className="text-sm font-medium text-stone-700">密码</label>
+                <div className="relative">
+                  <Input
+                    type={showProxyPassword ? "text" : "password"}
+                    value={proxyPassword}
+                    onChange={(event) => setProxyPassword(event.target.value)}
+                    placeholder="可选"
+                    className="h-11 rounded-xl border-stone-200 bg-white pr-10"
+                  />
+                  <button
+                    type="button"
+                    className="absolute top-1/2 right-3 -translate-y-1/2 text-stone-400 transition hover:text-stone-600"
+                    onClick={() => setShowProxyPassword((prev) => !prev)}
+                  >
+                    {showProxyPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end">
+              <Button
+                className="h-10 rounded-xl bg-stone-950 px-5 text-white hover:bg-stone-800"
+                onClick={() => void handleSaveProxy()}
+                disabled={isSavingProxy}
+              >
+                {isSavingProxy ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
+                保存代理
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
         <Card className="rounded-2xl border-white/80 bg-white/90 shadow-sm">
           <CardContent className="space-y-6 p-6">
             <div className="flex items-start justify-between">

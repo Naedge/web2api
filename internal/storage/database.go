@@ -30,7 +30,12 @@ func Open(cfg *config.Config) (*gorm.DB, error) {
 		return nil, err
 	}
 
-	if err := db.AutoMigrate(&model.AdminUser{}, &model.Account{}, &model.CPAPool{}); err != nil {
+	if err := db.AutoMigrate(
+		&model.AdminUser{},
+		&model.Account{},
+		&model.CPAPool{},
+		&model.ProxySetting{},
+	); err != nil {
 		return nil, err
 	}
 

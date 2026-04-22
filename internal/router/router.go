@@ -1,7 +1,9 @@
 package router
 
 import (
+	"fmt"
 	"net/http"
+	"runtime/debug"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -15,6 +17,7 @@ type Dependencies struct {
 	Web     *handler.WebHandler
 	AuthUI  *handler.AuthHandler
 	System  *handler.SystemHandler
+	Proxy   *handler.ProxyHandler
 	Account *handler.AccountHandler
 	CPA     *handler.CPAHandler
 	Image   *handler.ImageHandler
@@ -23,7 +26,13 @@ type Dependencies struct {
 func New(dep Dependencies) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.Recovery())
+	r.Use(gin.CustomRecovery(func(c *gin.Context, recovered any) {
+		message := fmt.Sprint(recovered)
+		fmt.Printf("[panic] %s\n%s\n", message, debug.Stack())
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+			"detail": gin.H{"error": message},
+		})
+	}))
 	r.Use(corsMiddleware())
 
 	r.GET("/", dep.Web.Serve)
@@ -35,6 +44,8 @@ func New(dep Dependencies) *gin.Engine {
 	apiRoutes := r.Group("/api")
 	apiRoutes.Use(dep.Auth.RequireSession())
 	apiRoutes.POST("/auth/logout", dep.AuthUI.Logout)
+	apiRoutes.GET("/settings/proxy", dep.Proxy.Get)
+	apiRoutes.POST("/settings/proxy", dep.Proxy.Save)
 	apiRoutes.GET("/accounts", dep.Account.List)
 	apiRoutes.POST("/accounts", dep.Account.Create)
 	apiRoutes.POST("/accounts/update", dep.Account.Update)
@@ -47,8 +58,6 @@ func New(dep Dependencies) *gin.Engine {
 	apiRoutes.GET("/cpa/pools/:poolID/files", dep.CPA.ListFiles)
 	apiRoutes.POST("/cpa/pools/:poolID/import", dep.CPA.StartImport)
 	apiRoutes.GET("/cpa/pools/:poolID/import", dep.CPA.GetImport)
-	apiRoutes.POST("/studio/images/generations", dep.Image.CreateImage)
-	apiRoutes.POST("/studio/images/edits", dep.Image.EditImage)
 
 	v1Routes := r.Group("/v1")
 	v1Routes.Use(dep.Auth.RequireAPIOrSession())

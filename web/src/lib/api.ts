@@ -228,3 +228,25 @@ export async function startCPAImport(poolId: string, names: string[]) {
 export async function fetchCPAPoolImportJob(poolId: string) {
   return httpRequest<{ import_job: CPAImportJob | null }>(`/api/cpa/pools/${poolId}/import`);
 }
+
+export type ProxyType = "http" | "https" | "socks5";
+
+export type ProxySettings = {
+  enabled: boolean;
+  type: ProxyType;
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+};
+
+export async function fetchProxySettings() {
+  return httpRequest<ProxySettings>("/api/settings/proxy");
+}
+
+export async function updateProxySettings(settings: ProxySettings) {
+  return httpRequest<ProxySettings>("/api/settings/proxy", {
+    method: "POST",
+    body: settings,
+  });
+}

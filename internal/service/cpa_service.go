@@ -366,8 +366,10 @@ func (s *CPAService) fetchJSON(
 }
 
 func (s *CPAService) fetchRaw(ctx context.Context, pool model.CPAPool, method string, path string) ([]byte, error) {
-	client := newHTTPClient(s.tlsVerify, 30*time.Second)
-
+	client, err := newHTTPClient(s.tlsVerify, 30*time.Second, nil)
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(
 		ctx,
 		method,

@@ -29,7 +29,7 @@ func (m *AuthMiddleware) RequireAPIKey() gin.HandlerFunc {
 		token := extractBearerToken(c.GetHeader("Authorization"))
 		if token == "" || token != m.apiKey {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"detail": gin.H{"error": "Unauthorized"},
+				"detail": gin.H{"error": "authorization is invalid"},
 			})
 			return
 		}
